@@ -1,12 +1,14 @@
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import Optional
 import json
 import subprocess
 import shutil
 import os
+import asyncio
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="."), name="static")
@@ -25,21 +27,19 @@ app.add_middleware(
 )
 
 class DependencyInput(BaseModel):
-    dependencies: str
+    dependencies: Optional[str] = None
 
 
-# 🔍 Find npm
 def find_npm_executable():
     for cmd in ["npm", "npm.cmd"]:
         try:
             subprocess.run([cmd, "--version"], capture_output=True, text=True, check=True)
             return cmd
-        except:
+        except Exception:
             continue
     return None
 
 
-# 🧠 Run npm audit
 def run_npm_audit():
     npm_cmd = find_npm_executable()
     if npm_cmd is None:
@@ -52,6 +52,9 @@ def run_npm_audit():
             text=True
         )
 
+        if result.returncode != 0 and not result.stdout:
+            return {"error": result.stderr.strip() or "npm audit failed"}
+
         if not result.stdout:
             return {"error": "npm audit returned no output"}
 
@@ -61,13 +64,13 @@ def run_npm_audit():
         return {"error": str(e)}
 
 
-# 🧠 Intelligent Analysis
 def analyze_npm_data(audit_data):
     if "error" in audit_data:
         return {
             "score": 0,
             "risk": "Error",
             "vulnerabilities": 0,
+            "total_dependencies": 0,
             "fix": "npm audit failed",
             "message": audit_data["error"]
         }
@@ -83,7 +86,6 @@ def analyze_npm_data(audit_data):
     score -= vulns.get("low", 0) * 5
     score = max(score, 0)
 
-    # 🎯 Risk classification
     if score < 40:
         risk = "High Risk"
     elif score < 70:
@@ -91,7 +93,6 @@ def analyze_npm_data(audit_data):
     else:
         risk = "Secure"
 
-    # 🧠 Intelligent Fix Suggestion
     if vulns.get("critical", 0) > 0:
         fix = "⚠️ Critical issues → Run: npm audit fix --force"
     elif vulns.get("high", 0) > 2:
@@ -112,14 +113,54 @@ def analyze_npm_data(audit_data):
     }
 
 
-# 🌐 SCAN API
+@app.get("/status")
+def status():
+    audit_data = run_npm_audit()
+    return analyze_npm_data(audit_data)
+
+
+@app.get("/package")
+def load_package():
+    if not os.path.exists("package.json"):
+        return {"error": "package.json not found"}
+
+    with open("package.json", "r", encoding="utf-8") as f:
+        return {"content": f.read()}
+
+
+async def auto_scan_loop():
+    while True:
+        with open("log.txt", "a", encoding="utf-8") as f:
+            f.write("Auto scan executed\n")
+        audit_data = run_npm_audit()
+        result = analyze_npm_data(audit_data)
+        print("Auto Result:", result)
+        await asyncio.sleep(15)
+
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(auto_scan_loop())
+
+
 @app.post("/scan")
 def scan(data: DependencyInput):
+    npm_cmd = find_npm_executable()
+    if npm_cmd is None:
+        return {"error": "npm not found"}
+
+    payload = data.dependencies or ""
+    if not payload.strip():
+        if not os.path.exists("package.json"):
+            return {"error": "No package.json available"}
+
+        with open("package.json", "r", encoding="utf-8") as f:
+            payload = f.read()
+
     try:
         with open("package.json", "w", encoding="utf-8") as f:
-            f.write(data.dependencies)
+            f.write(payload)
 
-        npm_cmd = find_npm_executable()
         subprocess.run([npm_cmd, "install"], check=True, capture_output=True, text=True)
 
         audit_data = run_npm_audit()
@@ -129,19 +170,18 @@ def scan(data: DependencyInput):
         return {"error": str(e)}
 
 
-# 🛠 FIX API (WITH VALIDATION + ROLLBACK)
 @app.post("/fix")
 def fix():
+    npm_cmd = find_npm_executable()
+    if npm_cmd is None:
+        return {"error": "npm not found"}
+
     try:
-        # Backup
         if os.path.exists("package.json"):
             shutil.copy("package.json", "package_backup.json")
 
-        npm_cmd = find_npm_executable()
-
         subprocess.run([npm_cmd, "audit", "fix"], check=True, capture_output=True, text=True)
 
-        # ✅ Post-fix validation
         audit_data = run_npm_audit()
         result = analyze_npm_data(audit_data)
 
@@ -152,7 +192,6 @@ def fix():
         }
 
     except Exception as e:
-        # 🔄 Rollback
         if os.path.exists("package_backup.json"):
             shutil.copy("package_backup.json", "package.json")
 
@@ -161,3 +200,30 @@ def fix():
             "message": "⚠️ Fix failed. System restored previous safe state",
             "error": str(e)
         }
+
+
+@app.websocket("/ws/scan")
+async def websocket_scan(websocket: WebSocket):
+    await websocket.accept()
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            dependencies = message.get("dependencies", "")
+
+            npm_cmd = find_npm_executable()
+            if npm_cmd is None:
+                await websocket.send_text(json.dumps({"error": "npm not found"}))
+                continue
+
+            with open("package.json", "w", encoding="utf-8") as f:
+                f.write(dependencies)
+
+            subprocess.run([npm_cmd, "install"], check=True, capture_output=True, text=True)
+            audit_data = run_npm_audit()
+            result = analyze_npm_data(audit_data)
+            await websocket.send_text(json.dumps(result))
+
+    except WebSocketDisconnect:
+        print("WebSocket disconnected")
