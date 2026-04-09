@@ -17,7 +17,7 @@ app.mount("/static", StaticFiles(directory="."), name="static")
 async def root():
     return FileResponse("index.html")
 
-# ✅ CORS
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
