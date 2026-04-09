@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>TrustNet Secure</title>
+
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+
+<div class="card">
+  <h1>🛡️ TrustNet Secure – Dependency Scanner</h1>
+
+  <div id="results"></div>
+
+  <input type="file" id="fileInput" accept=".json" onchange="uploadFile(event)">
+
+  <div class="input-container">
+    <textarea id="text" placeholder="Paste your package.json or dependencies..." onkeypress="handleKeyPress(event)"></textarea>
+    <button onclick="scanDependencies()">🔍 Scan</button>
+    <button onclick="fixVulnerabilities()">🛠 Fix</button>
+  </div>
+
+  <div id="status">Ready to scan</div>
+
+  <div id="summary">
+    <p>Total Dependencies: <span id="totalDeps">0</span></p>
+    <p>Vulnerabilities: <span id="vulnCount">0</span></p>
+    <p>Risk Level: <span id="riskLevel">-</span></p>
+  </div>
+
+  <canvas id="chart"></canvas>
+</div>
+
+<script src="/static/script.js"></script>
+
+</body>
+</html>

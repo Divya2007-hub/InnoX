@@ -1,0 +1,139 @@
+body {
+  margin: 0;
+  font-family: "Courier New", monospace;
+  background: black;
+  color: #00ff9f;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+
+/* 🖥 Terminal Box */
+.card {
+  width: 600px;
+  height: 650px;
+  padding: 20px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.9);
+  border: 1px solid #00ff9f;
+  box-shadow: 0 0 25px #00ff9f;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 🧠 Title */
+h1 {
+  color: #00ff9f;
+  text-shadow: 0 0 10px #00ff9f;
+  font-size: 22px;
+}
+
+/* 💻 Output */
+#chat {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  background: black;
+  border: 1px solid rgba(0,255,159,0.2);
+  border-radius: 5px;
+  font-size: 13px;
+}
+
+/* 💬 Messages */
+.message {
+  margin: 6px 0;
+  padding: 6px;
+  white-space: pre-line;
+}
+
+/* 👤 User */
+.user {
+  color: #00eaff;
+}
+
+/* 🤖 Bot */
+.bot {
+  color: #00ff9f;
+}
+
+/* 🚨 Risk Styles */
+.high {
+  color: red;
+  text-shadow: 0 0 5px red;
+}
+
+.medium {
+  color: orange;
+  text-shadow: 0 0 5px orange;
+}
+
+.safe {
+  color: lime;
+  text-shadow: 0 0 5px lime;
+}
+
+/* ⌨ Input */
+.input-container {
+  display: flex;
+  margin-top: 10px;
+}
+
+input {
+  flex: 1;
+  padding: 10px;
+  background: black;
+  border: 1px solid #00ff9f;
+  color: #00ff9f;
+  font-family: monospace;
+  outline: none;
+}
+
+/* 🧠 Cursor effect */
+input::placeholder {
+  color: rgba(0,255,159,0.5);
+}
+
+/* 🔘 Buttons */
+button {
+  margin-left: 5px;
+  padding: 10px;
+  background: black;
+  border: 1px solid #00ff9f;
+  color: #00ff9f;
+  cursor: pointer;
+  font-family: monospace;
+  transition: 0.2s;
+}
+
+button:hover {
+  background: #00ff9f;
+  color: black;
+  box-shadow: 0 0 10px #00ff9f;
+}
+
+/* 📡 Status */
+#status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #00ff9f;
+  opacity: 0.7;
+}
+
+/* 📊 Chart */
+canvas {
+  margin-top: 10px;
+  filter: brightness(0.8);
+}
+
+/* 🔥 Terminal blinking cursor effect */
+@keyframes blink {
+  0% {opacity: 1;}
+  50% {opacity: 0;}
+  100% {opacity: 1;}
+}
+
+.cursor::after {
+  content: "_";
+  animation: blink 1s infinite;
+}
