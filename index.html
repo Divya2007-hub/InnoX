@@ -1,40 +1,49 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>TrustNet Secure</title>
-
-  <meta charset="UTF-8">
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoShield Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-
 <body>
+    <div class="card">
+        <h1>🔐 AutoShield</h1>
+        <p class="subtitle">Autonomous dependency security scanner.</p>
 
-<div class="card">
-  <h1>🛡️ TrustNet Secure – Dependency Scanner</h1>
+        <div class="panel">
+            <textarea id="text" placeholder="Paste package.json contents here"></textarea>
+            <div class="input-row">
+                <label class="file-upload">
+                    <input type="file" accept=".json" onchange="uploadFile(event)">
+                    Load package.json
+                </label>
+                <button onclick="scanDependencies()">Scan</button>
+                <button onclick="fixVulnerabilities()">Fix</button>
+            </div>
+            <div id="status">Ready.</div>
+        </div>
 
-  <div id="results"></div>
+        <div class="summary">
+            <div class="summary-card">
+                <h3>Total Dependencies</h3>
+                <div id="totalDeps">0</div>
+            </div>
+            <div class="summary-card">
+                <h3>Vulnerabilities</h3>
+                <div id="vulnCount">0</div>
+            </div>
+            <div class="summary-card">
+                <h3>Risk Level</h3>
+                <div id="riskLevel">Unknown</div>
+            </div>
+        </div>
 
-  <input type="file" id="fileInput" accept=".json" onchange="uploadFile(event)">
+        <canvas id="chart" width="400" height="220"></canvas>
+        <div id="results"></div>
+    </div>
 
-  <div class="input-container">
-    <textarea id="text" placeholder="Paste your package.json or dependencies..." onkeypress="handleKeyPress(event)"></textarea>
-    <button onclick="scanDependencies()">🔍 Scan</button>
-    <button onclick="fixVulnerabilities()">🛠 Fix</button>
-  </div>
-
-  <div id="status">Ready to scan</div>
-
-  <div id="summary">
-    <p>Total Dependencies: <span id="totalDeps">0</span></p>
-    <p>Vulnerabilities: <span id="vulnCount">0</span></p>
-    <p>Risk Level: <span id="riskLevel">-</span></p>
-  </div>
-
-  <canvas id="chart"></canvas>
-</div>
-
-<script src="/static/script.js"></script>
-
+    <script src="/static/script.js"></script>
 </body>
 </html>
