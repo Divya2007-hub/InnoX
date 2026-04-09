@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: autosheild
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
