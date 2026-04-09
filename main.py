@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
@@ -8,23 +10,25 @@ import json
 import subprocess
 import shutil
 import os
+import sys
 import asyncio
 
-app = FastAPI()
-app.mount("/static", StaticFiles(directory="."), name="static")
 
-@app.get("/")
-async def root():
-    return FileResponse("index.html")
+def _configure_stdio_utf8():
+    """Avoid Windows console UnicodeEncodeError on emoji / non-ASCII in prints."""
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError, AttributeError):
+                pass
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+_configure_stdio_utf8()
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
 
 class DependencyInput(BaseModel):
     dependencies: Optional[str] = None
@@ -49,7 +53,8 @@ def run_npm_audit():
         result = subprocess.run(
             [npm_cmd, "audit", "--json"],
             capture_output=True,
-            text=True
+            text=True,
+            cwd=BASE_DIR
         )
 
         if result.returncode != 0 and not result.stdout:
@@ -64,15 +69,37 @@ def run_npm_audit():
         return {"error": str(e)}
 
 
+def auto_fix(vulns):
+    npm_cmd = find_npm_executable()
+    if npm_cmd is None:
+        return "npm not found"
+
+    try:
+        if vulns.get("critical", 0) > 0:
+            subprocess.run([npm_cmd, "audit", "fix", "--force"], capture_output=True, text=True, cwd=BASE_DIR)
+            return "🔥 Critical fixed"
+
+        elif vulns.get("high", 0) > 2:
+            subprocess.run([npm_cmd, "audit", "fix"], capture_output=True, text=True, cwd=BASE_DIR)
+            return "⚠️ High fixed"
+
+        return "✅ No fix needed"
+
+    except Exception as e:
+        return str(e)
+
+
 def analyze_npm_data(audit_data):
     if "error" in audit_data:
+        err = audit_data["error"]
         return {
             "score": 0,
             "risk": "Error",
             "vulnerabilities": 0,
             "total_dependencies": 0,
             "fix": "npm audit failed",
-            "message": audit_data["error"]
+            "message": err,
+            "error": err,
         }
 
     vulns = audit_data.get("metadata", {}).get("vulnerabilities", {})
@@ -113,34 +140,82 @@ def analyze_npm_data(audit_data):
     }
 
 
+async def auto_scan_loop():
+    log_path = os.path.join(BASE_DIR, "log.txt")
+
+    while True:
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write("Auto scan executed\n")
+
+            audit_data = run_npm_audit()
+            result = analyze_npm_data(audit_data)
+
+            if result.get("error"):
+                fix_status = "Skipped (audit failed)"
+            else:
+                fix_status = auto_fix(result.get("details", {}))
+
+            print("Auto Result:", result)
+            print("Auto Fix:", fix_status)
+
+        except Exception as e:
+            print("Auto Scan Error:", str(e))
+
+        await asyncio.sleep(15)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(auto_scan_loop())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/")
+async def root():
+    return FileResponse(os.path.join(BASE_DIR, "index.html"))
+
+
 @app.get("/status")
 def status():
     audit_data = run_npm_audit()
-    return analyze_npm_data(audit_data)
+    result = analyze_npm_data(audit_data)
+
+    if result.get("error"):
+        result["auto_fix_status"] = "Skipped (audit failed)"
+    else:
+        result["auto_fix_status"] = auto_fix(result.get("details", {}))
+
+    return result
 
 
 @app.get("/package")
 def load_package():
-    if not os.path.exists("package.json"):
+    package_path = os.path.join(BASE_DIR, "package.json")
+
+    if not os.path.exists(package_path):
         return {"error": "package.json not found"}
 
-    with open("package.json", "r", encoding="utf-8") as f:
+    with open(package_path, "r", encoding="utf-8") as f:
         return {"content": f.read()}
-
-
-async def auto_scan_loop():
-    while True:
-        with open("log.txt", "a", encoding="utf-8") as f:
-            f.write("Auto scan executed\n")
-        audit_data = run_npm_audit()
-        result = analyze_npm_data(audit_data)
-        print("Auto Result:", result)
-        await asyncio.sleep(15)
-
-
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(auto_scan_loop())
 
 
 @app.post("/scan")
@@ -150,18 +225,26 @@ def scan(data: DependencyInput):
         return {"error": "npm not found"}
 
     payload = data.dependencies or ""
+    package_path = os.path.join(BASE_DIR, "package.json")
+
     if not payload.strip():
-        if not os.path.exists("package.json"):
+        if not os.path.exists(package_path):
             return {"error": "No package.json available"}
 
-        with open("package.json", "r", encoding="utf-8") as f:
+        with open(package_path, "r", encoding="utf-8") as f:
             payload = f.read()
 
     try:
-        with open("package.json", "w", encoding="utf-8") as f:
+        with open(package_path, "w", encoding="utf-8") as f:
             f.write(payload)
 
-        subprocess.run([npm_cmd, "install"], check=True, capture_output=True, text=True)
+        subprocess.run(
+            [npm_cmd, "install"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=BASE_DIR
+        )
 
         audit_data = run_npm_audit()
         return analyze_npm_data(audit_data)
@@ -176,11 +259,20 @@ def fix():
     if npm_cmd is None:
         return {"error": "npm not found"}
 
-    try:
-        if os.path.exists("package.json"):
-            shutil.copy("package.json", "package_backup.json")
+    package_path = os.path.join(BASE_DIR, "package.json")
+    backup_path = os.path.join(BASE_DIR, "package_backup.json")
 
-        subprocess.run([npm_cmd, "audit", "fix"], check=True, capture_output=True, text=True)
+    try:
+        if os.path.exists(package_path):
+            shutil.copy(package_path, backup_path)
+
+        subprocess.run(
+            [npm_cmd, "audit", "fix"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=BASE_DIR
+        )
 
         audit_data = run_npm_audit()
         result = analyze_npm_data(audit_data)
@@ -192,8 +284,8 @@ def fix():
         }
 
     except Exception as e:
-        if os.path.exists("package_backup.json"):
-            shutil.copy("package_backup.json", "package.json")
+        if os.path.exists(backup_path):
+            shutil.copy(backup_path, package_path)
 
         return {
             "status": "rollback",
@@ -209,7 +301,11 @@ async def websocket_scan(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_text()
-            message = json.loads(data)
+            try:
+                message = json.loads(data)
+            except json.JSONDecodeError:
+                await websocket.send_text(json.dumps({"error": "Invalid JSON"}))
+                continue
             dependencies = message.get("dependencies", "")
 
             npm_cmd = find_npm_executable()
@@ -217,12 +313,22 @@ async def websocket_scan(websocket: WebSocket):
                 await websocket.send_text(json.dumps({"error": "npm not found"}))
                 continue
 
-            with open("package.json", "w", encoding="utf-8") as f:
+            package_path = os.path.join(BASE_DIR, "package.json")
+
+            with open(package_path, "w", encoding="utf-8") as f:
                 f.write(dependencies)
 
-            subprocess.run([npm_cmd, "install"], check=True, capture_output=True, text=True)
+            subprocess.run(
+                [npm_cmd, "install"],
+                check=True,
+                capture_output=True,
+                text=True,
+                cwd=BASE_DIR
+            )
+
             audit_data = run_npm_audit()
             result = analyze_npm_data(audit_data)
+
             await websocket.send_text(json.dumps(result))
 
     except WebSocketDisconnect:
