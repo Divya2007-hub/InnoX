@@ -1,116 +1,116 @@
 from contextlib import asynccontextmanager
-
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
-import json
 import subprocess
+import json
 import shutil
 import os
 import sys
 import asyncio
 
-
-def _configure_stdio_utf8():
-    """Avoid Windows console UnicodeEncodeError on emoji / non-ASCII in prints."""
+# ===============================
+# UTF-8 FIX (Windows safe)
+# ===============================
+def configure_utf8():
     for stream in (sys.stdout, sys.stderr):
-        if stream is not None and hasattr(stream, "reconfigure"):
+        if hasattr(stream, "reconfigure"):
             try:
                 stream.reconfigure(encoding="utf-8", errors="replace")
-            except (OSError, ValueError, AttributeError):
+            except:
                 pass
 
+configure_utf8()
 
-_configure_stdio_utf8()
-
+# ===============================
+# PATH SETUP
+# ===============================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
+# ===============================
+# FASTAPI APP
+# ===============================
+app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# ===============================
+# INPUT MODEL
+# ===============================
 class DependencyInput(BaseModel):
     dependencies: Optional[str] = None
 
-
-def find_npm_executable():
+# ===============================
+# NPM DETECTION
+# ===============================
+def get_npm():
     for cmd in ["npm", "npm.cmd"]:
         try:
-            subprocess.run([cmd, "--version"], capture_output=True, text=True, check=True)
+            subprocess.run([cmd, "--version"], capture_output=True, check=True)
             return cmd
-        except Exception:
+        except:
             continue
     return None
 
-
-def run_npm_audit():
-    npm_cmd = find_npm_executable()
-    if npm_cmd is None:
-        return {"error": "npm not found"}
+# ===============================
+# RUN NPM AUDIT
+# ===============================
+def run_audit():
+    npm = get_npm()
+    if not npm:
+        return {"error": "npm not installed"}
 
     try:
         result = subprocess.run(
-            [npm_cmd, "audit", "--json"],
+            [npm, "audit", "--json"],
+            cwd=BASE_DIR,
             capture_output=True,
-            text=True,
-            cwd=BASE_DIR
+            text=True
         )
 
-        if result.returncode != 0 and not result.stdout:
-            return {"error": result.stderr.strip() or "npm audit failed"}
-
         if not result.stdout:
-            return {"error": "npm audit returned no output"}
+            return {"error": "No audit output"}
 
         return json.loads(result.stdout)
 
     except Exception as e:
         return {"error": str(e)}
 
-
-def auto_fix(vulns):
-    npm_cmd = find_npm_executable()
-    if npm_cmd is None:
-        return "npm not found"
-
-    try:
-        if vulns.get("critical", 0) > 0:
-            subprocess.run([npm_cmd, "audit", "fix", "--force"], capture_output=True, text=True, cwd=BASE_DIR)
-            return "🔥 Critical fixed"
-
-        elif vulns.get("high", 0) > 2:
-            subprocess.run([npm_cmd, "audit", "fix"], capture_output=True, text=True, cwd=BASE_DIR)
-            return "⚠️ High fixed"
-
-        return "✅ No fix needed"
-
-    except Exception as e:
-        return str(e)
-
-
-def analyze_npm_data(audit_data):
-    if "error" in audit_data:
-        err = audit_data["error"]
+# ===============================
+# ANALYSIS ENGINE (CORE AI LOGIC)
+# ===============================
+def analyze(data):
+    if "error" in data:
         return {
             "score": 0,
             "risk": "Error",
-            "vulnerabilities": 0,
-            "total_dependencies": 0,
-            "fix": "npm audit failed",
-            "message": err,
-            "error": err,
+            "message": data["error"]
         }
 
-    vulns = audit_data.get("metadata", {}).get("vulnerabilities", {})
-    total_vulns = sum(vulns.values())
-    total_deps = audit_data.get("metadata", {}).get("totalDependencies", 0)
+    meta = data.get("metadata", {})
+    vulns = meta.get("vulnerabilities", {})
 
-    score = 100
-    score -= vulns.get("critical", 0) * 40
-    score -= vulns.get("high", 0) * 25
-    score -= vulns.get("moderate", 0) * 15
-    score -= vulns.get("low", 0) * 5
+    critical = vulns.get("critical", 0)
+    high = vulns.get("high", 0)
+    moderate = vulns.get("moderate", 0)
+    low = vulns.get("low", 0)
+
+    total = critical + high + moderate + low
+
+    # Risk scoring logic
+    score = 100 - (critical * 40 + high * 25 + moderate * 15 + low * 5)
     score = max(score, 0)
 
     if score < 40:
@@ -120,216 +120,121 @@ def analyze_npm_data(audit_data):
     else:
         risk = "Secure"
 
-    if vulns.get("critical", 0) > 0:
-        fix = "⚠️ Critical issues → Run: npm audit fix --force"
-    elif vulns.get("high", 0) > 2:
-        fix = "⚠️ Multiple high issues → Run: npm audit fix"
-    elif total_vulns > 0:
-        fix = "Run: npm audit fix"
-    else:
-        fix = "✅ No action needed"
-
     return {
         "score": score,
         "risk": risk,
-        "total_dependencies": total_deps,
-        "vulnerabilities": total_vulns,
-        "details": vulns,
-        "fix": fix,
-        "message": "Analysis complete"
+        "total_vulnerabilities": total,
+        "details": vulns
     }
 
+# ===============================
+# AUTO FIX ENGINE
+# ===============================
+def auto_fix(vulns):
+    npm = get_npm()
+    if not npm:
+        return "npm missing"
 
-async def auto_scan_loop():
-    log_path = os.path.join(BASE_DIR, "log.txt")
+    try:
+        if vulns.get("critical", 0) > 0:
+            subprocess.run([npm, "audit", "fix", "--force"], cwd=BASE_DIR)
+            return "🔥 Critical fixed"
 
+        elif vulns.get("high", 0) > 0:
+            subprocess.run([npm, "audit", "fix"], cwd=BASE_DIR)
+            return "⚠️ High fixed"
+
+        return "✅ No fix needed"
+
+    except Exception as e:
+        return str(e)
+
+# ===============================
+# AUTO SCAN LOOP (AUTONOMOUS 🔥)
+# ===============================
+async def auto_loop():
     while True:
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write("Auto scan executed\n")
+        print("🔄 Running autonomous scan...")
 
-            audit_data = run_npm_audit()
-            result = analyze_npm_data(audit_data)
+        data = run_audit()
+        result = analyze(data)
 
-            if result.get("error"):
-                fix_status = "Skipped (audit failed)"
-            else:
-                fix_status = auto_fix(result.get("details", {}))
+        if "details" in result:
+            fix = auto_fix(result["details"])
+        else:
+            fix = "Skipped"
 
-            print("Auto Result:", result)
-            print("Auto Fix:", fix_status)
+        print("Result:", result)
+        print("Fix:", fix)
 
-        except Exception as e:
-            print("Auto Scan Error:", str(e))
+        await asyncio.sleep(20)
 
-        await asyncio.sleep(15)
-
-
+# ===============================
+# LIFESPAN EVENT
+# ===============================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(auto_scan_loop())
+    task = asyncio.create_task(auto_loop())
     yield
     task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
-
 
 app = FastAPI(lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-
+# ===============================
+# ROUTES
+# ===============================
 @app.get("/")
-async def root():
+def home():
     return FileResponse(os.path.join(BASE_DIR, "index.html"))
 
+@app.get("/scan")
+def scan():
+    data = run_audit()
+    result = analyze(data)
 
-@app.get("/status")
-def status():
-    audit_data = run_npm_audit()
-    result = analyze_npm_data(audit_data)
-
-    if result.get("error"):
-        result["auto_fix_status"] = "Skipped (audit failed)"
-    else:
-        result["auto_fix_status"] = auto_fix(result.get("details", {}))
+    if "details" in result:
+        result["auto_fix"] = auto_fix(result["details"])
 
     return result
 
-
-@app.get("/package")
-def load_package():
-    package_path = os.path.join(BASE_DIR, "package.json")
-
-    if not os.path.exists(package_path):
-        return {"error": "package.json not found"}
-
-    with open(package_path, "r", encoding="utf-8") as f:
-        return {"content": f.read()}
-
-
-@app.post("/scan")
-def scan(data: DependencyInput):
-    npm_cmd = find_npm_executable()
-    if npm_cmd is None:
-        return {"error": "npm not found"}
-
-    payload = data.dependencies or ""
-    package_path = os.path.join(BASE_DIR, "package.json")
-
-    if not payload.strip():
-        if not os.path.exists(package_path):
-            return {"error": "No package.json available"}
-
-        with open(package_path, "r", encoding="utf-8") as f:
-            payload = f.read()
-
-    try:
-        with open(package_path, "w", encoding="utf-8") as f:
-            f.write(payload)
-
-        subprocess.run(
-            [npm_cmd, "install"],
-            check=True,
-            capture_output=True,
-            text=True,
-            cwd=BASE_DIR
-        )
-
-        audit_data = run_npm_audit()
-        return analyze_npm_data(audit_data)
-
-    except Exception as e:
-        return {"error": str(e)}
-
-
 @app.post("/fix")
 def fix():
-    npm_cmd = find_npm_executable()
-    if npm_cmd is None:
+    npm = get_npm()
+    if not npm:
         return {"error": "npm not found"}
 
-    package_path = os.path.join(BASE_DIR, "package.json")
-    backup_path = os.path.join(BASE_DIR, "package_backup.json")
+    backup = os.path.join(BASE_DIR, "package_backup.json")
+    pkg = os.path.join(BASE_DIR, "package.json")
 
     try:
-        if os.path.exists(package_path):
-            shutil.copy(package_path, backup_path)
+        if os.path.exists(pkg):
+            shutil.copy(pkg, backup)
 
-        subprocess.run(
-            [npm_cmd, "audit", "fix"],
-            check=True,
-            capture_output=True,
-            text=True,
-            cwd=BASE_DIR
-        )
+        subprocess.run([npm, "audit", "fix"], cwd=BASE_DIR)
 
-        audit_data = run_npm_audit()
-        result = analyze_npm_data(audit_data)
-
-        return {
-            "status": "success",
-            "message": "✅ Fix applied + security validated",
-            "result": result
-        }
+        return {"status": "success"}
 
     except Exception as e:
-        if os.path.exists(backup_path):
-            shutil.copy(backup_path, package_path)
+        if os.path.exists(backup):
+            shutil.copy(backup, pkg)
 
-        return {
-            "status": "rollback",
-            "message": "⚠️ Fix failed. System restored previous safe state",
-            "error": str(e)
-        }
+        return {"status": "rollback", "error": str(e)}
 
-
-@app.websocket("/ws/scan")
-async def websocket_scan(websocket: WebSocket):
-    await websocket.accept()
+# ===============================
+# WEBSOCKET (REAL-TIME SCAN)
+# ===============================
+@app.websocket("/ws")
+async def websocket_scan(ws: WebSocket):
+    await ws.accept()
 
     try:
         while True:
-            data = await websocket.receive_text()
-            try:
-                message = json.loads(data)
-            except json.JSONDecodeError:
-                await websocket.send_text(json.dumps({"error": "Invalid JSON"}))
-                continue
-            dependencies = message.get("dependencies", "")
+            await ws.receive_text()
 
-            npm_cmd = find_npm_executable()
-            if npm_cmd is None:
-                await websocket.send_text(json.dumps({"error": "npm not found"}))
-                continue
+            data = run_audit()
+            result = analyze(data)
 
-            package_path = os.path.join(BASE_DIR, "package.json")
-
-            with open(package_path, "w", encoding="utf-8") as f:
-                f.write(dependencies)
-
-            subprocess.run(
-                [npm_cmd, "install"],
-                check=True,
-                capture_output=True,
-                text=True,
-                cwd=BASE_DIR
-            )
-
-            audit_data = run_npm_audit()
-            result = analyze_npm_data(audit_data)
-
-            await websocket.send_text(json.dumps(result))
+            await ws.send_text(json.dumps(result))
 
     except WebSocketDisconnect:
-        print("WebSocket disconnected")
+        print("Disconnected")
