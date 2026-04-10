@@ -3,47 +3,85 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AutoShield Dashboard</title>
+    <title>AutoShield — Security dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
-    <div class="card">
-        <h1>🔐 AutoShield</h1>
-        <p class="subtitle">Autonomous dependency security scanner.</p>
+    <div class="bg-layer" aria-hidden="true"></div>
+    <div class="bg-grid" aria-hidden="true"></div>
 
-        <div class="panel">
-            <textarea id="text" placeholder="Paste package.json contents here"></textarea>
+    <main class="app">
+        <header class="hero">
+            <div class="hero-top">
+                <div class="brand">
+                    <span class="logo-mark" aria-hidden="true">
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 2L4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5l-8-3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                            <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </span>
+                    <div class="brand-text">
+                        <h1>AutoShield</h1>
+                        <p class="subtitle">Autonomous dependency security scanner</p>
+                    </div>
+                </div>
+            </div>
+            <p class="tagline">Paste <code>package.json</code> or load a file, then <strong>Scan</strong>. Scores reflect <code>npm audit</code> for this folder.</p>
+        </header>
+
+        <section class="card-surface workspace" aria-label="Package input">
+            <h2 class="section-title">Package manifest</h2>
+            <textarea id="text" spellcheck="false" placeholder='{
+  "name": "my-app",
+  "dependencies": {
+    "example": "^1.0.0"
+  }
+}'></textarea>
             <div class="input-row">
-                <label class="file-upload">
-                    <input type="file" accept=".json" onchange="uploadFile(event)">
+                <label class="btn btn-outline file-upload">
+                    <input type="file" accept=".json,.JSON" onchange="uploadFile(event)">
                     Load package.json
                 </label>
-                <button onclick="scanDependencies()">Scan</button>
-                <button onclick="fixVulnerabilities()">Fix</button>
+                <button type="button" class="btn btn-primary" onclick="scanDependencies()">Scan</button>
+                <button type="button" class="btn btn-accent" onclick="fixVulnerabilities()">Fix</button>
             </div>
-            <div id="status">Ready.</div>
-        </div>
+            <div id="status" class="status-line" role="status">Ready.</div>
+            <p class="hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to scan</p>
+        </section>
 
-        <div class="summary">
-            <div class="summary-card">
-                <h3>Total Dependencies</h3>
-                <div id="totalDeps">0</div>
-            </div>
-            <div class="summary-card">
-                <h3>Vulnerabilities</h3>
-                <div id="vulnCount">0</div>
-            </div>
-            <div class="summary-card">
-                <h3>Risk Level</h3>
-                <div id="riskLevel">Unknown</div>
-            </div>
-        </div>
+        <section class="summary" aria-label="Summary">
+            <article class="summary-card summary-card--deps">
+                <span class="summary-label">Total dependencies</span>
+                <div id="totalDeps" class="summary-value">—</div>
+            </article>
+            <article class="summary-card summary-card--vuln">
+                <span class="summary-label">Vulnerabilities</span>
+                <div id="vulnCount" class="summary-value">—</div>
+            </article>
+            <article class="summary-card summary-card--risk">
+                <span class="summary-label">Risk level</span>
+                <div id="riskLevel" class="summary-value risk-value">—</div>
+            </article>
+        </section>
 
-        <canvas id="chart" width="400" height="220"></canvas>
-        <div id="results"></div>
-    </div>
+        <section class="card-surface chart-block" aria-labelledby="chart-title">
+            <h2 id="chart-title" class="section-title">Security score (0–100)</h2>
+            <p class="chart-caption">Higher is better. Based on severity counts from npm audit.</p>
+            <div class="chart-wrap">
+                <canvas id="chart" aria-label="Security score chart"></canvas>
+            </div>
+        </section>
 
+        <section class="card-surface log-block" aria-label="Activity log">
+            <h2 class="section-title">Activity</h2>
+            <div id="results" class="results-feed"></div>
+        </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <script src="/static/script.js"></script>
 </body>
 </html>
